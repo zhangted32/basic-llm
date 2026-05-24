@@ -405,18 +405,41 @@ class QwenMLXInterface:
         messages = [
             {
                 "role": "system",
-                "content": "You are a Java stack trace analyzer. Convert stack traces to Enriched Call Graph (ECG) JSON format. Output ONLY valid JSON, no explanations."
+                "content": "You are a Java stack trace analyzer. Output ONLY valid JSON. No explanations."
             },
             {
                 "role": "user",
-                "content": f"""Convert this stack trace to ECG JSON:
+                "content": f"""Convert stack trace to JSON ECG:
 
 {trace}
 
-Output JSON with:
-- nodes: array of {{id, class, method, file, line, enrichment}}
-- edges: array of {{from, to, type}}  
-- metadata: {{enrichment_applied}}"""
+Output this exact JSON structure (no other text):
+{{
+  "nodes": [
+    {{
+      "id": "className.methodName",
+      "class": "fully.qualified.ClassName",
+      "method": "methodName",
+      "file": "FileName.java",
+      "line": 42,
+      "enrichment": {{
+        "type": "meta",
+        "module": "service",
+        "layer": "business"
+      }}
+    }}
+  ],
+  "edges": [
+    {{
+      "from": "ClassA.methodA",
+      "to": "ClassB.methodB",
+      "type": "call"
+    }}
+  ],
+  "metadata": {{
+    "enrichment_applied": ["E-META"]
+  }}
+}}"""
             }
         ]
         
