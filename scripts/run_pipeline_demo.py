@@ -178,10 +178,14 @@ Caused by: java.sql.SQLException: Connection refused
         for warn in verification.warnings:
             print(f"  - {warn}")
     
-    # Step 4: Model Interface (Mock)
-    print_subsection("5. MODEL INTERFACE (Mock)")
+    # Step 4: Model Interface
+    print_subsection("5. MODEL INTERFACE")
     
     model = QwenMLXInterface()
+    print("\nLoading Qwen model...")
+    model.load_model()
+    print(f"Model loaded: {model.model_loaded}")
+    
     model_ecg = model.generate_ecg(trace, context)
     
     print(f"\nModel: {model.model_name}")
