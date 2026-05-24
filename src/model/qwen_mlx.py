@@ -19,7 +19,7 @@ class QwenMLXInterface:
     Qwen2.5-1.5B-Instruct interface via MLX for Apple Silicon.
     
     This implementation uses MLX for efficient inference on Apple Silicon GPUs.
-    Model weights are downloaded from HuggingFace on first use.
+    Model weights are downloaded from ModelScope.
     """
 
     def __init__(self, model_path: Optional[str] = None):
@@ -27,7 +27,7 @@ class QwenMLXInterface:
         Initialize Qwen MLX interface.
         
         Args:
-            model_path: Optional local path to model. If None, will download from HuggingFace.
+            model_path: Optional local path to model. If None, will use ModelScope cache.
         """
         self.model_name = "Qwen/Qwen2.5-1.5B-Instruct"
         self.model_path = model_path
@@ -38,9 +38,9 @@ class QwenMLXInterface:
 
     def load_model(self):
         """
-        Load the Qwen model via MLX.
+        Load the Qwen model via MLX-LM.
         
-        Downloads from HuggingFace if not cached.
+        Uses ModelScope cached model if available.
         """
         if not MLX_AVAILABLE:
             print("MLX not available. Using mock implementation.")
@@ -49,24 +49,26 @@ class QwenMLXInterface:
 
         try:
             print(f"Loading Qwen model from {self.model_name}...")
-            from mlx.utils import tree_flatten, tree_unflatten
+            print("This may take a few minutes on first run (converting to MLX format)...")
             
-            # Check if model exists locally
-            cache_dir = Path.home() / ".cache" / "huggingface"
-            model_cache = cache_dir / "hub" / "models--Qwen--Qwen2.5-1.5B-Instruct"
+            from mlx_lm import load, generate
             
-            if not model_cache.exists():
-                print("Model not found in cache. Would download from HuggingFace...")
-                print("For production use, implement proper HuggingFace model download.")
-                self.model_loaded = False
-                return
+            # Check for ModelScope cache first
+            modelscope_path = Path.home() / ".cache" / "modelscope" / "hub" / "qwen" / "Qwen2.5-1.5B-Instruct"
             
-            # For now, mark as loaded (actual loading would require proper MLX model setup)
+            # Determine which path to use
+            load_path = str(modelscope_path) if modelscope_path.exists() else self.model_name
+            print(f"Trying to load from: {load_path}")
+            
+            # Load model and tokenizer using mlx-lm
+            self.model, self.tokenizer = load(load_path)
+            
             self.model_loaded = True
-            print("Model loaded successfully (stub implementation).")
+            print("✅ Model loaded successfully!")
             
         except Exception as e:
             print(f"Failed to load model: {str(e)}")
+            print("Falling back to mock implementation.")
             self.model_loaded = False
 
     def generate_ecg(self, trace: str, context: Dict) -> Dict[str, Any]:
@@ -89,21 +91,24 @@ class QwenMLXInterface:
             # Return mock ECG for testing
             ecg = self._generate_mock_ecg(trace, context)
         else:
-            # Generate using model (stub implementation)
+            # Generate using actual model
             try:
-                # Tokenize input
-                # For production: use proper tokenizer
-                # input_ids = self.tokenizer.encode(prompt)
+                from mlx_lm import generate
                 
                 # Generate output
-                # For production: use actual model inference
-                # output_ids = self.model.generate(input_ids, max_length=2048)
-                # output = self.tokenizer.decode(output_ids)
+                output = generate(
+                    self.model,
+                    self.tokenizer,
+                    prompt=prompt,
+                    max_tokens=2048,
+                    verbose=False
+                )
                 
-                # For now, use mock
-                ecg = self._generate_mock_ecg(trace, context)
+                # Parse the JSON output
+                ecg = self._parse_model_output(output)
                 
             except Exception as e:
+                print(f"Model generation failed: {str(e)}")
                 return self._create_error_ecg(f"Generation failed: {str(e)}")
         
         # Add metadata
@@ -115,6 +120,76 @@ class QwenMLXInterface:
         self.inference_count += 1
         
         return ecg
+
+    def _parse_model_output(self, output: str) -> Dict[str, Any]:
+        """
+        Parse model output to extract ECG JSON.
+        
+        Args:
+            output: Raw model output string
+            
+        Returns:
+            Parsed ECG dictionary
+        """
+        import re
+        
+        print(f"Raw output length: {len(output)}")
+        print(f"Output preview: {output[:200]}...")
+        
+        # Try to find JSON in output
+        json_match = re.search(r'\{.*\}', output, re.DOTALL)
+        
+        if json_match:
+            json_str = json_match.group()
+            print(f"Found JSON with length: {len(json_str)}")
+            
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError as e:
+                print(f"JSON parsing failed: {e}")
+                # Try to fix incomplete JSON
+                fixed_json = self._fix_incomplete_json(json_str)
+                if fixed_json:
+                    try:
+                        return json.loads(fixed_json)
+                    except json.JSONDecodeError:
+                        print("Failed to parse fixed JSON")
+                return self._create_error_ecg("Failed to parse model output")
+        
+        # If no JSON found, return mock ECG
+        print("No JSON found in model output")
+        return self._create_error_ecg("No valid JSON in output")
+    
+    def _fix_incomplete_json(self, json_str: str) -> str:
+        """
+        Try to fix incomplete JSON by closing open brackets.
+        
+        Args:
+            json_str: Incomplete JSON string
+            
+        Returns:
+            Fixed JSON string or None if unfixable
+        """
+        try:
+            # Count brackets
+            open_braces = json_str.count('{')
+            close_braces = json_str.count('}')
+            open_brackets = json_str.count('[')
+            close_brackets = json_str.count(']')
+            
+            # Add closing brackets
+            fixed = json_str
+            fixed += '}' * (open_braces - close_braces)
+            fixed += ']' * (open_brackets - close_brackets)
+            
+            # Fix incomplete strings
+            # If ends with incomplete string, close it
+            if fixed.count('"') % 2 != 0:
+                fixed += '"'
+            
+            return fixed
+        except Exception:
+            return None
 
     def _generate_mock_ecg(self, trace: str, context: Dict) -> Dict[str, Any]:
         """
@@ -326,67 +401,34 @@ class QwenMLXInterface:
         Returns:
             Formatted prompt string
         """
-        context_str = json.dumps(context, indent=2)
-        
-        prompt = f"""You are an expert Java exception analyst. Given a Java stack trace and context information, generate an Enriched Call Graph (ECG).
+        # Qwen2.5-Instruct chat format
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a Java stack trace analyzer. Convert stack traces to Enriched Call Graph (ECG) JSON format. Output ONLY valid JSON, no explanations."
+            },
+            {
+                "role": "user",
+                "content": f"""Convert this stack trace to ECG JSON:
 
-## Input Stack Trace:
-```
 {trace}
-```
 
-## Context Information:
-```json
-{context_str}
-```
-
-## ECG Format:
-Generate an Enriched Call Graph (ECG) as JSON with the following structure:
-{{
-  "nodes": [
-    {{
-      "id": "className.methodName",
-      "class": "fully.qualified.ClassName",
-      "method": "methodName",
-      "file": "FileName.java",
-      "line": 123,
-      "enrichment": {{
-        "type": "proxy|async|interceptor|remote|meta",
-        "proxy_resolved": true,
-        "proxy_type": "spring|jdk|cglib",
-        "resolved_to": "RealClassName.methodName",
-        "async_boundary": true,
-        "interceptor_type": "transaction|retry|circuit_breaker",
-        "remote_type": "feign|rest|http",
-        "external_service": "ServiceName",
-        "module": "controller|service|repository",
-        "severity": "low|medium|high|critical",
-        "layer": "presentation|business|data|infrastructure"
-      }}
-    }}
-  ],
-  "edges": [
-    {{
-      "from": "ClassName.methodName",
-      "to": "ClassName.methodName",
-      "type": "call|throws|async"
-    }}
-  ],
-  "metadata": {{
-    "enrichment_applied": ["E-PROXY", "E-INTERCEPTOR", "E-META"],
-    "generation_time_ms": 123,
-    "model": "Qwen2.5-1.5B-Instruct"
-  }}
-}}
-
-## Enrichment Rules:
-1. **E-PROXY**: Replace proxy class names (e.g., `$Proxy123`, `UserService$$EnhancerByCGLIB$$abc123`) with real implementation names
-2. **E-INTERCEPTOR**: Insert framework interceptor nodes (TransactionInterceptor, RetryTemplate, etc.) based on annotations
-3. **E-ASYNC**: Mark async boundaries for Future.get(), CompletableFuture, @Async methods
-4. **E-REMOTE**: Add external service nodes for Feign client calls, REST clients, etc.
-5. **E-META**: Add module (controller/service/repository), severity (low/medium/high/critical), and layer (presentation/business/data)
-
-Generate the ECG now. Only output valid JSON, no other text."""
+Output JSON with:
+- nodes: array of {{id, class, method, file, line, enrichment}}
+- edges: array of {{from, to, type}}  
+- metadata: {{enrichment_applied}}"""
+            }
+        ]
+        
+        # Format for Qwen2.5
+        prompt = ""
+        for msg in messages:
+            if msg["role"] == "system":
+                prompt += f"<|im_start|>system\n{msg['content']}<|im_end|>\n"
+            elif msg["role"] == "user":
+                prompt += f"<|im_start|>user\n{msg['content']}<|im_end|>\n"
+        
+        prompt += "<|im_start|>assistant\n"
         
         return prompt
 
