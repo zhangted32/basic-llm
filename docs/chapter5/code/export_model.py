@@ -10,12 +10,19 @@ def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
+def get_device():
+    if torch.cuda.is_available():
+        return "cuda"
+    elif torch.backends.mps.is_available():
+        return "mps"
+    else:
+        return "cpu"
+
+
 def export_model(tokenizer_path, model_config, model_ckpt_path, save_directory):
-    # 注册自定义类和配置
     ModelConfig.register_for_auto_class()
     Transformer.register_for_auto_class("AutoModelForCausalLM")
 
-    # 加载tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_path,
         trust_remote_code=True,
@@ -24,9 +31,8 @@ def export_model(tokenizer_path, model_config, model_ckpt_path, save_directory):
     if tokenizer.pad_token_id is not None:
         model_config.pad_token_id = tokenizer.pad_token_id
 
-    # 初始化模型
     model = Transformer(model_config)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device(get_device())
 
     # 加载模型权重
     state_dict = torch.load(model_ckpt_path, map_location=device)

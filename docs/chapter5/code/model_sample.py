@@ -6,35 +6,48 @@ from k_model import ModelConfig, Transformer
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import argparse
 
+
+def get_device():
+    if torch.cuda.is_available():
+        return "cuda", "cuda"
+    elif torch.backends.mps.is_available():
+        return "mps", "mps"
+    else:
+        return "cpu", "cpu"
+
+
 class TextGenerator:
     def __init__(self, 
-                 checkpoint='./base_model_215M/pretrain_1024_18_6144.pth',  # 模型检查点路径
-                 tokenizer_model_path='./tokenizer_k/',  # 分词器模型路径
-                 seed=42,  # 随机种子，确保可重复性
-                 device=None,  # 设备，优先使用 CUDA，如果没有可用的 CUDA，则使用 CPU
-                 dtype="bfloat16"):  # 数据类型，默认为 float32，可以选择 float16 或 bfloat16
-        """
-        初始化 TextGenerator 类，加载模型、设置设备和分词器等。
-        """
-        # 模型加载配置
-        self.checkpoint = checkpoint  # 保存的模型检查点路径
-        self.tokenizer_model_path = tokenizer_model_path  # 分词器模型文件路径
-        self.seed = seed  # 随机数种子，用于生成的可重复性
-        self.device = device or ('cuda:0' if torch.cuda.is_available() else 'cpu')  # 根据硬件条件选择设备
-        self.dtype = dtype  # 模型的浮点数类型
-        self.device_type = 'cuda' if 'cuda' in self.device else 'cpu'  # 判断当前设备是否为 CUDA
+                 checkpoint='./base_model_215M/pretrain_1024_18_6144.pth',
+                 tokenizer_model_path='./tokenizer_k/',
+                 seed=42,
+                 device=None,
+                 dtype="bfloat16"):
+        self.checkpoint = checkpoint
+        self.tokenizer_model_path = tokenizer_model_path
+        self.seed = seed
         
-        # 设置随机种子，确保生成的可重复性
-        torch.manual_seed(seed)  # 设置 CPU 随机种子
-        torch.cuda.manual_seed(seed)  # 设置 CUDA 随机种子
-        torch.backends.cuda.matmul.allow_tf32 = True  # 允许 CUDA 使用 TF32 精度进行矩阵乘法运算
-        torch.backends.cudnn.allow_tf32 = True  # 允许 cuDNN 使用 TF32 精度加速
+        device_name, device_type = get_device()
+        self.device = device or device_name
+        self.dtype = dtype
         
-        # 根据 dtype 选择适当的自动混合精度上下文
+        if "cuda" in self.device:
+            self.device_type = "cuda"
+        elif "mps" in self.device:
+            self.device_type = "mps"
+        else:
+            self.device_type = "cpu"
+        
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(seed)
+        if self.device_type == "cuda":
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+        
         ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[self.dtype]
         self.ctx = nullcontext() if self.device_type == 'cpu' else torch.amp.autocast(device_type=self.device_type, dtype=ptdtype)
-        # 初始化分词器
-        self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_model_path)  # 根据指定的路径加载分词器
+        self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_model_path)
 
         # 加载模型检查点文件
         checkpoint_dict = torch.load(self.checkpoint, map_location=self.device)  # 加载模型参数 # 初始化模型参数

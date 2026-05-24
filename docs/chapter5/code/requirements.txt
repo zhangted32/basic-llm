@@ -22,3 +22,4 @@ jsonlines==4.0.0
 trl==0.11.3
 ujson==5.1.0
 swanlab
+mlx

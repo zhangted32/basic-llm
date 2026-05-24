@@ -18,17 +18,19 @@ from dataset import PretrainDataset
 
 import swanlab
 
-# 忽略警告信息
 warnings.filterwarnings('ignore')
 
 
+def get_device():
+    if torch.cuda.is_available():
+        return "cuda", "cuda"
+    elif torch.backends.mps.is_available():
+        return "mps", "mps"
+    else:
+        return "cpu", "cpu"
+
+
 def Logger(content):
-    """
-    简单的日志记录函数
-    
-    Args:
-        content (str): 要打印的内容
-    """
     print(content)
 
 def get_lr(it, all):
@@ -199,20 +201,21 @@ def init_model():
     if tokenizer.pad_token_id is not None:
         lm_config.pad_token_id = tokenizer.pad_token_id
 
-    # 根据配置创建Transformer模型
     model = Transformer(lm_config)
     
-    # 多卡初始化：检查可用GPU数量并设置DataParallel
-    num_gpus = torch.cuda.device_count()
-    if num_gpus > 1:
-        Logger(f"Using {num_gpus} GPUs with DataParallel!")
-        # 使用DataParallel包装模型以支持多GPU训练
-        model = torch.nn.DataParallel(model)
+    num_gpus = 0
+    if torch.cuda.is_available():
+        num_gpus = torch.cuda.device_count()
+        if num_gpus > 1:
+            Logger(f"Using {num_gpus} GPUs with DataParallel!")
+            model = torch.nn.DataParallel(model)
+    elif torch.backends.mps.is_available():
+        num_gpus = torch.backends.mps.device_count()
+        if num_gpus > 1:
+            Logger(f"Using {num_gpus} MPS devices (DataParallel not supported on MPS, using single device)")
     
-    # 将模型移动到指定设备（GPU或CPU）
     model = model.to(args.device)
     
-    # 计算并打印模型参数量（以百万为单位）
     Logger(f'LLM总参数量：{count_parameters(model) / 1e6:.3f} 百万')
     return model, tokenizer
 
@@ -226,7 +229,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=1, help="训练轮数")
     parser.add_argument("--batch_size", type=int, default=64, help="批次大小")
     parser.add_argument("--learning_rate", type=float, default=2e-4, help="学习率")
-    parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")
+    parser.add_argument("--device", type=str, default=None, help="训练设备")
     parser.add_argument("--dtype", type=str, default="bfloat16", help="数据类型")
     
     # 实验跟踪和数据加载参数
@@ -248,15 +251,18 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # ==================== GPU环境设置 ====================
-    # 设置可见的GPU设备
-    if args.gpus is not None:
+    device_name, device_type = get_device()
+    if args.device is None:
+        args.device = device_name
+
+    if torch.cuda.is_available() and args.gpus is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
-        # 自动设置主设备为第一个可用GPU
-        if torch.cuda.is_available():
-            args.device = "cuda:0"
-        else:
-            args.device = "cpu"
+        args.device = "cuda:0"
+    elif torch.backends.mps.is_available():
+        Logger("Using Apple MPS backend")
+        args.device = "mps"
+    else:
+        args.device = "cpu"
 
     # ==================== 实验跟踪初始化 ====================
     if args.use_swanlab:
@@ -281,15 +287,17 @@ if __name__ == "__main__":
     # 创建必要的目录
     os.makedirs(args.out_dir, exist_ok=True)
     
-    # 设置随机种子以确保结果可复现
     torch.manual_seed(42)
     
-    # 确定设备类型（用于选择合适的上下文管理器）
-    device_type = "cuda" if "cuda" in args.device else "cpu"
+    device_name, device_type = get_device()
+    if "cuda" in args.device:
+        device_type = "cuda"
+    elif "mps" in args.device:
+        device_type = "mps"
+    else:
+        device_type = "cpu"
 
-    # 设置混合精度训练的上下文管理器
-    # CPU训练时使用nullcontext，GPU训练时使用autocast
-    ctx = nullcontext() if device_type == "cpu" else torch.cuda.amp.autocast()
+    ctx = nullcontext() if device_type == "cpu" else torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16)
 
     # ==================== 模型和数据初始化 ====================
     # 初始化模型和分词器
@@ -308,10 +316,7 @@ if __name__ == "__main__":
         num_workers=args.num_workers # 数据加载的并行工作进程数
     )
 
-    # ==================== 优化器和训练组件初始化 ====================
-    # 初始化混合精度训练的梯度缩放器
-    # 只有在使用float16或bfloat16时才启用
-    scaler = torch.cuda.amp.GradScaler(enabled=(args.dtype in ['float16', 'bfloat16']))
+    scaler = torch.amp.GradScaler(enabled=(args.dtype in ['float16', 'bfloat16']) and device_type != 'cpu', device=device_type)
     
     # 初始化Adam优化器
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)

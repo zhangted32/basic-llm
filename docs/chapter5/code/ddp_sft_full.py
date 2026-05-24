@@ -17,12 +17,19 @@ from dataset import SFTDataset
 
 import swanlab
 
-# 忽略警告
 warnings.filterwarnings('ignore')
 
 
+def get_device():
+    if torch.cuda.is_available():
+        return "cuda", "cuda"
+    elif torch.backends.mps.is_available():
+        return "mps", "mps"
+    else:
+        return "cpu", "cpu"
+
+
 def Logger(content):
-    """日志记录器"""
     print(content)
 
 def get_lr(it, all):
@@ -125,15 +132,12 @@ def init_model():
         """计算模型参数量"""
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-    # 加载分词器
     tokenizer = AutoTokenizer.from_pretrained('./tokenizer_k/')
     if tokenizer.pad_token_id is not None:
         lm_config.pad_token_id = tokenizer.pad_token_id
 
-    # 初始化模型
     model = Transformer(lm_config)
 
-    # 加载预训练权重
     ckp = './base_model_215M/pretrain_1024_18_6144.pth'
     state_dict = torch.load(ckp, map_location=args.device)
     unwanted_prefix = '_orig_mod.'
@@ -142,11 +146,16 @@ def init_model():
             state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
     model.load_state_dict(state_dict, strict=False)
     
-    # 多卡初始化
-    num_gpus = torch.cuda.device_count()
-    if num_gpus > 1:
-        Logger(f"Using {num_gpus} GPUs with DataParallel!")
-        model = torch.nn.DataParallel(model)
+    num_gpus = 0
+    if torch.cuda.is_available():
+        num_gpus = torch.cuda.device_count()
+        if num_gpus > 1:
+            Logger(f"Using {num_gpus} GPUs with DataParallel!")
+            model = torch.nn.DataParallel(model)
+    elif torch.backends.mps.is_available():
+        num_gpus = torch.backends.mps.device_count()
+        if num_gpus > 1:
+            Logger(f"Using {num_gpus} MPS devices (DataParallel not supported on MPS, using single device)")
     
     model = model.to(args.device)
     Logger(f'LLM总参数量：{count_parameters(model) / 1e6:.3f} 百万')
@@ -159,7 +168,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=1, help="训练轮数")
     parser.add_argument("--batch_size", type=int, default=64, help="批处理大小")
     parser.add_argument("--learning_rate", type=float, default=2e-4, help="学习率")
-    parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="使用的设备")
+    parser.add_argument("--device", type=str, default=None, help="使用的设备")
     parser.add_argument("--dtype", type=str, default="bfloat16", help="数据类型")
     parser.add_argument("--use_swanlab", action="store_true", help="是否使用SwanLab进行实验跟踪")
     parser.add_argument("--num_workers", type=int, default=8, help="数据加载的工作进程数")
@@ -174,14 +183,18 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # 设置可见GPU
-    if args.gpus is not None:
+    device_name, device_type = get_device()
+    if args.device is None:
+        args.device = device_name
+
+    if torch.cuda.is_available() and args.gpus is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
-        # 自动设置主设备为第一个GPU
-        if torch.cuda.is_available():
-            args.device = "cuda:0"
-        else:
-            args.device = "cpu"
+        args.device = "cuda:0"
+    elif torch.backends.mps.is_available():
+        Logger("Using Apple MPS backend")
+        args.device = "mps"
+    else:
+        args.device = "cpu"
 
     # 初始化swanlab
     if args.use_swanlab:
@@ -200,13 +213,18 @@ if __name__ == "__main__":
     args.save_dir = os.path.join(args.out_dir)
     os.makedirs(args.out_dir, exist_ok=True)
     torch.manual_seed(42)
-    device_type = "cuda" if "cuda" in args.device else "cpu"
+    
+    device_name, device_type = get_device()
+    if "cuda" in args.device:
+        device_type = "cuda"
+    elif "mps" in args.device:
+        device_type = "mps"
+    else:
+        device_type = "cpu"
 
-    # 在生成 ctx 之前，先将字符串转为 torch 的 dtype 对象
     ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[args.dtype]
     
-    # 上下文管理器
-    ctx = nullcontext() if device_type == "cpu" else torch.cuda.amp.autocast(dtype=ptdtype)
+    ctx = nullcontext() if device_type == "cpu" else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
     # 初始化模型和分词器
     model, tokenizer = init_model()
@@ -222,8 +240,7 @@ if __name__ == "__main__":
         num_workers=args.num_workers
     )
 
-    # 缩放器和优化器
-    scaler = torch.cuda.amp.GradScaler(enabled=(args.dtype in ['float16', 'bfloat16']))
+    scaler = torch.amp.GradScaler(enabled=(args.dtype in ['float16', 'bfloat16']) and device_type != 'cpu', device=device_type)
     optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
 
     # 开始训练
