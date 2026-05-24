@@ -1,0 +1,21 @@
+{
+  "classes": {
+    "com.example.service.UserServiceImpl": {
+      "annotations": ["org.springframework.stereotype.Service",
+                      "org.springframework.transaction.annotation.Transactional"],
+      "methods": {
+        "getUser": {"annotations": ["@Transactional"]},
+        "createUser": {"annotations": ["@Transactional"]}
+      }
+    },
+    "com.example.repository.UserRepository": {
+      "annotations": ["org.springframework.stereotype.Repository"],
+      "methods": {}
+    }
+  },
+  "proxy_mappings": {
+    "$Proxy56": "com.example.service.UserServiceImpl"
+  },
+  "proxy_type": "jdk_proxy"
+}
+
