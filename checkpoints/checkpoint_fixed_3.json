@@ -1,9 +1,9 @@
 {
   "checkpoint": 3,
   "samples_trained": 30,
-  "node_match": 1.1166666666666667,
-  "enrichment_match": 0.4166666666666667,
+  "node_match": 1.175,
+  "enrichment_match": 0.975,
   "structured_enrichment": 1.0,
-  "timestamp": 1779706927.227902,
-  "elapsed_time": 1201.261890888214
+  "timestamp": 1779711762.0719302,
+  "elapsed_time": 1804.8250887393951
 }

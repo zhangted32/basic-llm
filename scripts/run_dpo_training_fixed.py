@@ -19,8 +19,8 @@ mx.set_default_device(mx.gpu if mx.metal.is_available() else mx.cpu)
 print(f"MLX Device: {mx.default_device()}")
 
 
-def generate_samples(count=100):
-    """Generate synthetic training samples."""
+def generate_samples(count=150):
+    """Generate synthetic training samples with diverse enrichments."""
     samples = []
     
     exception_types = [
@@ -29,22 +29,35 @@ def generate_samples(count=100):
         "java.lang.IllegalArgumentException",
         "java.sql.SQLException",
         "java.io.IOException",
-        "java.util.concurrent.ExecutionException"
+        "java.util.concurrent.ExecutionException",
+        "org.springframework.transaction.CannotCreateTransactionException",
+        "com.netflix.hystrix.exception.HystrixRuntimeException",
+        "feign.RetryableException",
+        "redis.clients.jedis.exceptions.JedisConnectionException"
     ]
     
     modules = [
-        {"name": "User", "package": "com.example.service"},
-        {"name": "Order", "package": "com.example.service"},
-        {"name": "Product", "package": "com.example.service"},
-        {"name": "Payment", "package": "com.example.service"},
-        {"name": "Database", "package": "com.example.repository"},
-        {"name": "Cache", "package": "com.example.repository"},
-        {"name": "User", "package": "com.example.controller"},
-        {"name": "Order", "package": "com.example.controller"}
+        {"name": "User", "package": "com.example.service", "type": "service"},
+        {"name": "Order", "package": "com.example.service", "type": "service"},
+        {"name": "Product", "package": "com.example.service", "type": "service"},
+        {"name": "Payment", "package": "com.example.service", "type": "service"},
+        {"name": "Inventory", "package": "com.example.service", "type": "service"},
+        {"name": "Database", "package": "com.example.repository", "type": "repository"},
+        {"name": "Cache", "package": "com.example.repository", "type": "repository"},
+        {"name": "User", "package": "com.example.controller", "type": "controller"},
+        {"name": "Order", "package": "com.example.controller", "type": "controller"},
+        {"name": "Product", "package": "com.example.controller", "type": "controller"},
+        {"name": "Payment", "package": "com.example.client", "type": "client"},
+        {"name": "External", "package": "com.example.client", "type": "client"}
     ]
     
-    proxy_types = ["jdk.proxy3.$Proxy", "jdk.proxy2.$Proxy", "com.example.service.$$EnhancerByCGLIB$$"]
-    frameworks = ["org.springframework.web.servlet.DispatcherServlet", "org.springframework.transaction.interceptor.TransactionInterceptor"]
+    proxy_types = ["jdk.proxy3.$Proxy", "jdk.proxy2.$Proxy", "com.example.service.$$EnhancerByCGLIB$$", "org.springframework.cglib.proxy.$Proxy"]
+    frameworks = [
+        "org.springframework.web.servlet.DispatcherServlet", 
+        "org.springframework.transaction.interceptor.TransactionInterceptor",
+        "org.springframework.aop.framework.ReflectiveMethodInvocation",
+        "com.netflix.hystrix.AbstractCommand"
+    ]
     
     for i in range(count):
         exception = random.choice(exception_types)

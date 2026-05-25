@@ -405,51 +405,67 @@ class QwenMLXInterface:
         messages = [
             {
                 "role": "system",
-                "content": "You are a Java stack trace analyzer. Output ONLY valid JSON. Extract ALL frames from the trace."
+                "content": "You are a Java stack trace analyzer. Output ONLY valid JSON. Extract ALL frames from the trace with accurate enrichments."
             },
             {
                 "role": "user",
                 "content": f"""Convert the following Java stack trace to JSON ECG format.
 
-STACK TRACE TO ANALYZE:
+STACK TRACE:
 {trace}
 
-RULES:
-1. Extract EVERY method call from the stack trace - DO NOT USE example data
-2. Create one node for each frame in the trace
-3. Create edges connecting nodes in call order
-4. Use the enrichment type based on class name patterns:
-   - controller classes → type: "meta", module: "controller", layer: "presentation"
-   - service classes → type: "meta", module: "service", layer: "business"
-   - repository/dao classes → type: "meta", module: "repository", layer: "data"
-   - proxy classes ($Proxy, Enhancer) → type: "proxy", proxy_type: "jdk" or "cglib"
+ENRICHMENT RULES (CRITICAL - APPLY TO EACH NODE):
+1. CONTROLLER: Class names containing 'Controller' → type:"meta", module:"controller", layer:"presentation"
+2. SERVICE: Class names containing 'Service' → type:"meta", module:"service", layer:"business"
+3. REPOSITORY: Class names containing 'Repository' or 'DAO' → type:"meta", module:"repository", layer:"data"
+4. PROXY: Class names containing '$Proxy' or 'Enhancer' → type:"proxy", proxy_type:"jdk", resolved_to:"ACTUAL_CLASS_NAME"
+5. INTERCEPTOR: Class names containing 'Interceptor' or 'Transaction' → type:"interceptor", interceptor_type:"transaction"
+6. DISPATCHER: Class names containing 'DispatcherServlet' → type:"meta", module:"framework", layer:"infrastructure"
+7. DEFAULT: All others → type:"meta", module:"unknown", layer:"infrastructure"
 
-OUTPUT FORMAT (use your extracted data, NOT example values):
+OUTPUT MUST INCLUDE:
+- ALL method calls from the stack trace
+- Correct enrichment type for each node based on rules above
+- Properly formatted edges connecting nodes in call order
+
+EXAMPLE OUTPUT FORMAT:
 {{
   "nodes": [
     {{
-      "id": "CLASS_NAME.METHOD_NAME",
-      "class": "FULLY_QUALIFIED_CLASS_NAME",
-      "method": "METHOD_NAME",
-      "file": "FILE_NAME.java",
-      "line": LINE_NUMBER,
+      "id": "com.example.service.UserServiceImpl.getUser",
+      "class": "com.example.service.UserServiceImpl",
+      "method": "getUser",
+      "file": "UserServiceImpl.java",
+      "line": 42,
       "enrichment": {{
-        "type": "TYPE",
-        "module": "MODULE",
-        "layer": "LAYER"
+        "type": "meta",
+        "module": "service",
+        "layer": "business"
+      }}
+    }},
+    {{
+      "id": "jdk.proxy3.$Proxy31.getUser",
+      "class": "jdk.proxy3.$Proxy31",
+      "method": "getUser",
+      "file": "Unknown Source",
+      "line": null,
+      "enrichment": {{
+        "type": "proxy",
+        "proxy_type": "jdk",
+        "resolved_to": "com.example.service.UserServiceImpl"
       }}
     }}
   ],
   "edges": [
     {{
-      "from": "FROM_NODE_ID",
-      "to": "TO_NODE_ID",
+      "from": "com.example.service.UserServiceImpl.getUser",
+      "to": "jdk.proxy3.$Proxy31.getUser",
       "type": "call"
     }}
   ],
   "metadata": {{
     "enrichment_applied": ["E-META", "E-PROXY"],
-    "total_frames": NUM_FRAMES
+    "total_frames": 2
   }}
 }}"""
             }
