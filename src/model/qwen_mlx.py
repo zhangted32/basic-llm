@@ -405,39 +405,51 @@ class QwenMLXInterface:
         messages = [
             {
                 "role": "system",
-                "content": "You are a Java stack trace analyzer. Output ONLY valid JSON. No explanations."
+                "content": "You are a Java stack trace analyzer. Output ONLY valid JSON. Extract ALL frames from the trace."
             },
             {
                 "role": "user",
-                "content": f"""Convert stack trace to JSON ECG:
+                "content": f"""Convert the following Java stack trace to JSON ECG format.
 
+STACK TRACE TO ANALYZE:
 {trace}
 
-Output this exact JSON structure (no other text):
+RULES:
+1. Extract EVERY method call from the stack trace - DO NOT USE example data
+2. Create one node for each frame in the trace
+3. Create edges connecting nodes in call order
+4. Use the enrichment type based on class name patterns:
+   - controller classes → type: "meta", module: "controller", layer: "presentation"
+   - service classes → type: "meta", module: "service", layer: "business"
+   - repository/dao classes → type: "meta", module: "repository", layer: "data"
+   - proxy classes ($Proxy, Enhancer) → type: "proxy", proxy_type: "jdk" or "cglib"
+
+OUTPUT FORMAT (use your extracted data, NOT example values):
 {{
   "nodes": [
     {{
-      "id": "className.methodName",
-      "class": "fully.qualified.ClassName",
-      "method": "methodName",
-      "file": "FileName.java",
-      "line": 42,
+      "id": "CLASS_NAME.METHOD_NAME",
+      "class": "FULLY_QUALIFIED_CLASS_NAME",
+      "method": "METHOD_NAME",
+      "file": "FILE_NAME.java",
+      "line": LINE_NUMBER,
       "enrichment": {{
-        "type": "meta",
-        "module": "service",
-        "layer": "business"
+        "type": "TYPE",
+        "module": "MODULE",
+        "layer": "LAYER"
       }}
     }}
   ],
   "edges": [
     {{
-      "from": "ClassA.methodA",
-      "to": "ClassB.methodB",
+      "from": "FROM_NODE_ID",
+      "to": "TO_NODE_ID",
       "type": "call"
     }}
   ],
   "metadata": {{
-    "enrichment_applied": ["E-META"]
+    "enrichment_applied": ["E-META", "E-PROXY"],
+    "total_frames": NUM_FRAMES
   }}
 }}"""
             }
